@@ -1,16 +1,24 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import './App.css';
 
 export default function App() {
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState([]);
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(false);
+  const chatEndRef = useRef(null);
 
-  const handleSend = async (e) => {
-    e.preventDefault();
-    if (!input.trim() || loading) return;
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, status]);
 
-    const userQuery = input;
+  const handleSend = async (e, queryOverride) => {
+    if (e) e.preventDefault();
+    const userQuery = queryOverride || input;
+    if (!userQuery.trim() || loading) return;
+
     setInput('');
     setMessages(prev => [...prev, { role: 'user', content: userQuery }]);
     setLoading(true);
@@ -65,84 +73,109 @@ export default function App() {
   };
 
   return (
-    <div style={{ maxWidth: '800px', margin: '40px auto', fontFamily: 'system-ui, sans-serif' }}>
-      <h2>Agentic RAG with DuckDuckGo MCP Fallback</h2>
+    <div className="app-container">
+      {/* Background Ambient Orbs */}
+      <div className="glow-orb orb-1"></div>
+      <div className="glow-orb orb-2"></div>
 
-      <div style={{
-        border: '1px solid #e0e0e0',
-        borderRadius: '10px',
-        padding: '20px',
-        minHeight: '420px',
-        background: '#fafafa',
-        marginBottom: '16px'
-      }}>
+      <header className="app-header">
+        <div className="brand-badge">
+          <span className="pulse-dot"></span> AGENTIC ENGINE
+        </div>
+        <h1>Agentic RAG Assistant</h1>
+        <p className="subtitle">
+          Intelligent routing with local vector storage & Live DuckDuckGo fallback
+        </p>
+      </header>
+
+      <main className="chat-window">
         {messages.length === 0 && (
-          <p style={{ color: '#888' }}>
-            Try asking:
-            <br />• <em>"What is our home office equipment allowance?"</em> (Tests local vector DB)
-            <br />• <em>"What is the latest world news today?"</em> (Tests DuckDuckGo fallback)
-          </p>
-        )}
+          <div className="empty-state">
+            <div className="hero-icon">🔍</div>
+            <h3>How can I assist your research?</h3>
+            <p>Select a quick prompt or type your query below to begin.</p>
+            
+            <div className="suggestion-grid">
+              <button 
+                className="suggestion-card"
+                onClick={() => handleSend(null, "What is our home office equipment allowance?")}
+              >
+                <span className="card-badge green">Vector DB</span>
+                <span className="card-text">"What is our home office equipment allowance?"</span>
+              </button>
 
-        {messages.map((m, i) => (
-          <div key={i} style={{ marginBottom: '16px', textAlign: m.role === 'user' ? 'right' : 'left' }}>
-            <div style={{
-              display: 'inline-block',
-              maxWidth: '80%',
-              padding: '12px 16px',
-              borderRadius: '10px',
-              textAlign: 'left',
-              background: m.role === 'user' ? '#2563eb' : '#ffffff',
-              color: m.role === 'user' ? '#ffffff' : '#1e293b',
-              boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
-            }}>
-              <div style={{ whiteSpace: 'pre-wrap' }}>{m.content}</div>
-
-              {m.source && (
-                <div style={{ marginTop: '8px', fontSize: '11px', borderTop: '1px solid #eee', paddingTop: '6px' }}>
-                  {m.source === 'internal_kb' ? (
-                    <span style={{ color: '#16a34a', fontWeight: 'bold' }}>
-                      🟢 Source: Internal Knowledge Base
-                    </span>
-                  ) : (
-                    <span style={{ color: '#ea580c', fontWeight: 'bold' }}>
-                      🌐 Source: DuckDuckGo Web Search (MCP)
-                    </span>
-                  )}
-                </div>
-              )}
+              <button 
+                className="suggestion-card"
+                onClick={() => handleSend(null, "What is the latest world news today?")}
+              >
+                <span className="card-badge orange">MCP Fallback</span>
+                <span className="card-text">"What is the latest world news today?"</span>
+              </button>
             </div>
           </div>
-        ))}
-
-        {status && (
-          <div style={{ color: '#64748b', fontSize: '12px', fontStyle: 'italic', marginTop: '10px' }}>
-            ⏳ {status}
-          </div>
         )}
-      </div>
 
-      <form onSubmit={handleSend} style={{ display: 'flex', gap: '10px' }}>
-        <input
-          style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '14px' }}
-          value={input}
-          placeholder="Ask a question..."
-          onChange={e => setInput(e.target.value)}
-          disabled={loading}
-        />
-        <button
-          style={{
-            padding: '12px 24px',
-            background: '#2563eb',
-            color: '#fff',
-            border: 'none',
-            borderRadius: '8px',
-            cursor: loading ? 'not-allowed' : 'pointer'
-          }}
-          disabled={loading}
-        >
-          Send
-        </button>
+        <div className="message-list">
+          {messages.map((m, i) => (
+            <div key={i} className={`message-row ${m.role}`}>
+              <div className="avatar">
+                {m.role === 'user' ? '👤' : '🤖'}
+              </div>
+              <div className="message-bubble">
+                <div className="content message-content">
+                  {m.role === 'user' ? (
+                    m.content
+                  ) : (
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {m.content || ''}
+                    </ReactMarkdown>
+                  )}
+                </div>
+
+                {m.source && (
+                  <div className="source-tag">
+                    {m.source === 'internal_kb' ? (
+                      <span className="badge kb-badge">
+                        🟢 Source: Internal Knowledge Base
+                      </span>
+                    ) : (
+                      <span className="badge web-badge">
+                        🌐 Source: DuckDuckGo Web Search (MCP)
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+
+          {status && (
+            <div className="status-indicator">
+              <span className="spinner"></span>
+              <span>{status}</span>
+            </div>
+          )}
+          <div ref={chatEndRef} />
+        </div>
+      </main>
+
+      <form className="input-bar" onSubmit={handleSend}>
+        <div className="input-wrapper">
+          <input
+            type="text"
+            value={input}
+            placeholder="Ask anything across local docs or the live web..."
+            onChange={e => setInput(e.target.value)}
+            disabled={loading}
+          />
+          <button type="submit" disabled={loading || !input.trim()}>
+            <span>Send</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </button>
+        </div>
       </form>
     </div>
   );
