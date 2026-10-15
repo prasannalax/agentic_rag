@@ -45,17 +45,100 @@ async function getOllamaEmbedding(text) {
   return data.embedding;
 }
 
+// Generate the final answer using Groq with history support.
+async function generateAnswer(query, context, sourceOrigin, history = []) {
+  const systemPrompt = `You are an intelligent, helpful AI assistant built on an Agentic RAG system.
+
+Your System Stack:
+- Chat Generation: Groq (${GROQ_CHAT_MODEL})
+- Local Embeddings: Ollama (${OLLAMA_EMBED_MODEL})
+- Database: MongoDB Atlas (Vector Search)
+- Live Web Search: DuckDuckGo MCP Integration
+
+Answering Guidelines:
+1. For greetings, identity questions ("who are you?"), or general capabilities: Answer directly in a friendly, professional manner without relying strictly on external documents.
+2. For questions with context provided (Internal KB or Web Search): Base your response on the supplied context and cite key facts accurately.
+3. If no relevant context exists for a specialized fact question: Explain clearly that sufficient information was not found. Never invent current facts or citations.`;
+
+  const completion = await groq.chat.completions.create({
+    model: GROQ_CHAT_MODEL,
+    messages: [
+      {
+        role: 'system',
+        content: systemPrompt
+      },
+      ...history
+        .filter(
+          (message) =>
+            ['user', 'assistant'].includes(message.role) &&
+            typeof message.content === 'string'
+        )
+        .slice(-10)
+        .map((message) => ({
+          role: message.role,
+          content: message.content.slice(0, 4000)
+        })),
+      {
+        role: 'user',
+        content:
+          `Source Origin: ${sourceOrigin}\n\n` +
+          `Context Information:\n${context || 'No specific context provided.'}\n\n` +
+          `User Query:\n${query}`
+      }
+    ],
+    temperature: 0.3,
+    max_completion_tokens: 2048
+  });
+
+  const answer = completion.choices?.[0]?.message?.content;
+
+  if (typeof answer !== 'string' || !answer.trim()) {
+    throw new Error('Groq returned an empty answer.');
+  }
+
+  return answer.trim();
+}
+
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    embeddings: 'Ollama',
+    chat: 'Groq',
+    model: GROQ_CHAT_MODEL
+  });
+});
+
 app.post('/api/chat', async (req, res) => {
-  const { query } = req.body;
+  const query =
+    typeof req.body?.query === 'string' ? req.body.query.trim() : '';
+  const history = Array.isArray(req.body?.history)
+    ? req.body.history
+        .filter(
+          (message) =>
+            ['user', 'assistant'].includes(message.role) &&
+            typeof message.content === 'string'
+        )
+        .slice(-10)
+        .map((message) => ({
+          role: message.role,
+          content: message.content.slice(0, 4000)
+        }))
+    : [];
 
   if (!query) {
     return res.status(400).json({ error: "Query is required" });
   }
 
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders?.();
+
+  const sendEvent = (data) => {
+    if (!res.writableEnded) {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    }
+  };
 
   try {
     // 1. Generate vector representation
@@ -83,54 +166,35 @@ app.post('/api/chat', async (req, res) => {
     // 3. Routing decision
     if (topScore >= SUFFICIENCY_THRESHOLD) {
       console.log("-> Routing: Internal Knowledge Base");
-      res.write(`data: ${JSON.stringify({ status: `Resolved from Internal Knowledge Base (Similarity: ${topScore.toFixed(2)})` })}\n\n`);
+      sendEvent({ status: `Resolved from Internal Knowledge Base (Similarity: ${topScore.toFixed(2)})` });
       context = localMatches.map(m => `[Document: ${m.title}]: ${m.content}`).join('\n\n');
       sourceOrigin = 'internal_kb';
     } else {
       console.log("-> Routing: DuckDuckGo Fallback via MCP");
-      res.write(`data: ${JSON.stringify({ status: "Local data insufficient. Falling back to live DuckDuckGo via MCP..." })}\n\n`);
+      sendEvent({ status: "Local data insufficient. Falling back to live DuckDuckGo via MCP..." });
       sourceOrigin = 'duckduckgo_live';
       context = await queryDuckDuckGoFallback(query);
       console.log("DuckDuckGo context acquired successfully.");
     }
 
-    // 4. Groq chat completion with tool-call suppression
-    const stream = await groq.chat.completions.create({
-      messages: [
-        {
-          role: 'system',
-          content: `You are an intelligent enterprise assistant.
-Do not output raw JSON, function executions, or tool calls.
-Answer the user's question clearly in conversational markdown using ONLY the context provided below.
+    // 4. Generate final answer using Groq with history passed in
+    const answer = await generateAnswer(query, context, sourceOrigin, history);
 
-Source origin: ${sourceOrigin}
-
-Context:
-${context}`
-        },
-        {
-          role: 'user',
-          content: query
-        }
-      ],
-      model: GROQ_CHAT_MODEL,
-      tool_choice: 'none',
-      stream: true
+    sendEvent({
+      text: answer,
+      source: sourceOrigin
     });
 
-    for await (const chunk of stream) {
-      const text = chunk.choices[0]?.delta?.content || '';
-      if (text) {
-        res.write(`data: ${JSON.stringify({ text, source: sourceOrigin })}\n\n`);
-      }
+    if (!res.writableEnded) {
+      res.write('data: [DONE]\n\n');
+      res.end();
     }
-
-    res.write('data: [DONE]\n\n');
-    res.end();
   } catch (error) {
     console.error("Pipeline error:", error);
-    res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
-    res.end();
+    sendEvent({ error: error.message });
+    if (!res.writableEnded) {
+      res.end();
+    }
   }
 });
 

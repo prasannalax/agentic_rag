@@ -25,33 +25,68 @@ export default function App() {
     setStatus('Searching local database...');
 
     try {
-      // Changed from 'http://localhost:5000/api/chat' to relative path '/api/chat'
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: userQuery })
+        body: JSON.stringify({
+          query: userQuery,
+          history: messages
+            .filter(
+              (message) =>
+                ['user', 'assistant'].includes(message.role) &&
+                typeof message.content === 'string'
+            )
+            .slice(-10)
+            .map((message) => ({
+              role: message.role,
+              content: message.content
+            }))
+        })
       });
+
+      if (!response.ok) {
+        throw new Error(`Backend returned HTTP ${response.status}`);
+      }
+      if (!response.body) {
+        throw new Error('The response has no readable stream.');
+      }
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
+      let buffer = '';
       let assistantMsg = { role: 'assistant', content: '', source: '' };
 
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
 
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n').filter(l => l.startsWith('data: '));
+        // SSE events are separated by double newlines
+        const events = buffer.split(/\r?\n\r?\n/);
+        buffer = events.pop() || '';
 
-        for (const line of lines) {
-          const payload = line.replace('data: ', '').trim();
-          if (payload === '[DONE]') continue;
+        for (const event of events) {
+          const dataLines = event
+            .split(/\r?\n/)
+            .filter(line => line.startsWith('data:'))
+            .map(line => line.slice(5).trimStart());
+
+          if (dataLines.length === 0) continue;
+
+          const payload = dataLines.join('\n');
+          if (payload.trim() === '[DONE]') continue;
 
           const data = JSON.parse(payload);
           if (data.status) setStatus(data.status);
+          if (data.error) {
+            throw new Error(data.error);
+          }
+
           if (data.text) {
-            assistantMsg.content += data.text;
-            assistantMsg.source = data.source;
+            assistantMsg = {
+              ...assistantMsg,
+              content: assistantMsg.content + data.text,
+              source: data.source || assistantMsg.source
+            };
 
             setMessages(prev => {
               const updated = [...prev];
@@ -63,10 +98,12 @@ export default function App() {
             });
           }
         }
+
+        if (done) break;
       }
     } catch (err) {
       console.error(err);
-      setStatus('Error connecting to backend.');
+      setStatus(err.message || 'Error connecting to backend.');
     } finally {
       setStatus('');
       setLoading(false);
