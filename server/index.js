@@ -1,5 +1,5 @@
 import dns from 'node:dns';
-dns.setServers(['8.8.8.8', '8.8.4.4']);
+dns.setServers(['8.8.8.8', '8.8.4.4']); // Fixes MongoDB SRV resolution on Windows
 
 import express from 'express';
 import cors from 'cors';
@@ -9,227 +9,132 @@ import Groq from 'groq-sdk';
 import Document from './models/Document.js';
 import { queryDuckDuckGoFallback } from './services/mcpClient.js';
 
-// Always load .env from the server directory.
-dotenv.config({ path: new URL('./.env', import.meta.url) });
+dotenv.config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-const PORT = process.env.PORT || 5000;
+const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+const OLLAMA_EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || 'nomic-embed-text';
+const GROQ_CHAT_MODEL = process.env.GROQ_CHAT_MODEL || 'openai/gpt-oss-20b';
 
-const OLLAMA_URL =
-  process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434';
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-const EMBEDDING_MODEL =
-  process.env.OLLAMA_EMBED_MODEL || 'nomic-embed-text';
+await mongoose.connect(process.env.MONGODB_URI);
+console.log("Connected to MongoDB Atlas.");
+console.log(`Chat model: ${GROQ_CHAT_MODEL}`);
+console.log(`Embedding model: ${OLLAMA_EMBED_MODEL}`);
 
-const CHAT_MODEL =
-  process.env.GROQ_CHAT_MODEL || 'openai/gpt-oss-20b';
-
-if (!process.env.MONGODB_URI) {
-  throw new Error('MONGODB_URI is missing from server/.env');
-}
-
-if (!process.env.GROQ_API_KEY) {
-  throw new Error('GROQ_API_KEY is missing from server/.env');
-}
-
-const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY
-});
-
-// Helper to identify conversational or identity questions
-function isGeneralOrIdentityQuery(query) {
-  const q = query.toLowerCase().trim();
-  const pattern = /\b(hi|hello|hey|who are you|what can you do|your name|what is this|help|how are you)\b/i;
-  return pattern.test(q) && q.length < 50;
-}
-
-// Generate a local embedding using Ollama.
-async function createEmbedding(text) {
-  const response = await fetch(`${OLLAMA_URL}/api/embed`, {
+// Helper to embed query locally using Ollama
+async function getOllamaEmbedding(text) {
+  const res = await fetch(`${OLLAMA_BASE_URL}/api/embeddings`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: EMBEDDING_MODEL,
-      input: text
+      model: OLLAMA_EMBED_MODEL,
+      prompt: text
     })
   });
 
-  if (!response.ok) {
-    throw new Error(
-      `Ollama embedding failed (${response.status}): ${await response.text()}`
-    );
+  if (!res.ok) {
+    throw new Error(`Ollama embedding error: ${res.statusText}`);
   }
 
-  const data = await response.json();
-  const vector = data.embeddings?.[0];
-
-  if (!vector || vector.length !== 768) {
-    throw new Error(
-      `Expected a 768-dimensional embedding; received ${vector?.length ?? 0}.`
-    );
-  }
-
-  return vector;
+  const data = await res.json();
+  return data.embedding;
 }
-
-// Generate the final answer using Groq.
-async function generateAnswer(query, context, sourceOrigin) {
-  const systemPrompt = `You are an intelligent, helpful AI assistant built on an Agentic RAG system.
-
-Your System Stack:
-- Chat Generation: Groq (${CHAT_MODEL})
-- Local Embeddings: Ollama (${EMBEDDING_MODEL})
-- Database: MongoDB Atlas (Vector Search)
-- Live Web Search: DuckDuckGo MCP Integration
-
-Answering Guidelines:
-1. For greetings, identity questions ("who are you?"), or general capabilities: Answer directly in a friendly, professional manner without relying strictly on external documents.
-2. For questions with context provided (Internal KB or Web Search): Base your response on the supplied context and cite key facts accurately.
-3. If no relevant context exists for a specialized fact question: Explain clearly that sufficient information was not found. Never invent current facts or citations.`;
-
-  const completion = await groq.chat.completions.create({
-    model: CHAT_MODEL,
-    messages: [
-      {
-        role: 'system',
-        content: systemPrompt
-      },
-      {
-        role: 'user',
-        content:
-          `Source Origin: ${sourceOrigin}\n\n` +
-          `Context Information:\n${context || 'No specific context provided.'}\n\n` +
-          `User Query:\n${query}`
-      }
-    ],
-    temperature: 0.3,
-    max_completion_tokens: 2048
-  });
-
-  const answer = completion.choices?.[0]?.message?.content;
-
-  if (typeof answer !== 'string' || !answer.trim()) {
-    throw new Error('Groq returned an empty answer.');
-  }
-
-  return answer.trim();
-}
-
-// Connect to MongoDB before accepting requests.
-await mongoose.connect(process.env.MONGODB_URI);
-console.log('Connected to MongoDB Atlas.');
-
-app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    embeddings: 'Ollama',
-    chat: 'Groq',
-    model: CHAT_MODEL
-  });
-});
 
 app.post('/api/chat', async (req, res) => {
-  const query =
-    typeof req.body?.query === 'string' ? req.body.query.trim() : '';
+  const { query } = req.body;
 
   if (!query) {
-    return res.status(400).json({ error: 'Query is required.' });
+    return res.status(400).json({ error: "Query is required" });
   }
 
-  // Preserve the existing frontend's Server-Sent Events format.
-  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders?.();
 
-  const sendEvent = (data) => {
-    if (!res.writableEnded) {
-      res.write(`data: ${JSON.stringify(data)}\n\n`);
-    }
-  };
-
   try {
-    let context = '';
-    let sourceOrigin = 'general_assistant';
+    // 1. Generate vector representation
+    const queryVector = await getOllamaEmbedding(query);
 
-    // Check for direct identity or greeting questions first
-    if (isGeneralOrIdentityQuery(query)) {
-      sendEvent({ status: 'Processing query...' });
-      sourceOrigin = 'general_assistant';
-    } else {
-      // 1. Embed the question locally using Ollama
-      sendEvent({ status: 'Searching local vector database...' });
-      const queryVector = await createEmbedding(query);
-
-      // 2. Search MongoDB Atlas vector index
-      const localMatches = await Document.aggregate([
-        {
-          $vectorSearch: { index: 'vector_index', path: 'embedding', queryVector, numCandidates: 20, limit: 3 } }, {$project: {
-            title: 1,
-            content: 1,
-            score: { $meta: 'vectorSearchScore' }
-          }
+    // 2. Query MongoDB Vector Index
+    const localMatches = await Document.aggregate([
+      {
+        $vectorSearch: { index: 'vector_index', path: 'embedding', queryVector: queryVector, numCandidates: 10, limit: 2 } }, {$project: {
+          title: 1,
+          content: 1,
+          score: { $meta: 'vectorSearchScore' }
         }
-      ]);
+      }
+    ]);
 
-      const topScore = localMatches[0]?.score ?? 0;
-      console.log(`Query: "${query}" | Top vector score: ${topScore}`);
+    let context = '';
+    let sourceOrigin = 'internal_kb';
+    const topScore = localMatches[0]?.score || 0;
+    
+    // Threshold set to 0.78 for nomic-embed-text cosine distances
+    const SUFFICIENCY_THRESHOLD = 0.78;
+    console.log(`Query: "${query}" | Top Vector Score: ${topScore} (Threshold: ${SUFFICIENCY_THRESHOLD})`);
 
-      // Cosine similarity threshold for vector search matching
-      const SUFFICIENCY_THRESHOLD = 0.65;
+    // 3. Routing decision
+    if (topScore >= SUFFICIENCY_THRESHOLD) {
+      console.log("-> Routing: Internal Knowledge Base");
+      res.write(`data: ${JSON.stringify({ status: `Resolved from Internal Knowledge Base (Similarity: ${topScore.toFixed(2)})` })}\n\n`);
+      context = localMatches.map(m => `[Document: ${m.title}]: ${m.content}`).join('\n\n');
+      sourceOrigin = 'internal_kb';
+    } else {
+      console.log("-> Routing: DuckDuckGo Fallback via MCP");
+      res.write(`data: ${JSON.stringify({ status: "Local data insufficient. Falling back to live DuckDuckGo via MCP..." })}\n\n`);
+      sourceOrigin = 'duckduckgo_live';
+      context = await queryDuckDuckGoFallback(query);
+      console.log("DuckDuckGo context acquired successfully.");
+    }
 
-      if (localMatches.length > 0 && topScore >= SUFFICIENCY_THRESHOLD) {
-        context = localMatches
-          .map((doc) => `[Document: ${doc.title}]\n${doc.content}`)
-          .join('\n\n');
+    // 4. Groq chat completion with tool-call suppression
+    const stream = await groq.chat.completions.create({
+      messages: [
+        {
+          role: 'system',
+          content: `You are an intelligent enterprise assistant.
+Do not output raw JSON, function executions, or tool calls.
+Answer the user's question clearly in conversational markdown using ONLY the context provided below.
 
-        sourceOrigin = 'internal_kb';
-        sendEvent({
-          status: `Resolved from Internal KB (Similarity: ${(topScore * 100).toFixed(1)}%)`
-        });
-      } else {
-        // Fall back to live web search via DuckDuckGo MCP
-        sendEvent({
-          status: 'Local data insufficient. Searching live web via DuckDuckGo MCP...'
-        });
+Source origin: ${sourceOrigin}
 
-        console.log(`Triggering DuckDuckGo MCP fallback for: "${query}"`);
-        context = await queryDuckDuckGoFallback(query);
-        sourceOrigin = 'duckduckgo_live';
-        console.log('DuckDuckGo MCP fallback completed.');
+Context:
+${context}`
+        },
+        {
+          role: 'user',
+          content: query
+        }
+      ],
+      model: GROQ_CHAT_MODEL,
+      tool_choice: 'none',
+      stream: true
+    });
+
+    for await (const chunk of stream) {
+      const text = chunk.choices[0]?.delta?.content || '';
+      if (text) {
+        res.write(`data: ${JSON.stringify({ text, source: sourceOrigin })}\n\n`);
       }
     }
 
-    // Generate final answer using Groq
-    const answer = await generateAnswer(query, context, sourceOrigin);
-
-    sendEvent({
-      text: answer,
-      source: sourceOrigin
-    });
-
-    if (!res.writableEnded) {
-      res.write('data: [DONE]\n\n');
-      res.end();
-    }
+    res.write('data: [DONE]\n\n');
+    res.end();
   } catch (error) {
-    console.error('Pipeline error:', error.message);
-
-    sendEvent({
-      error: 'The request could not be completed. Check the backend terminal for details.'
-    });
-
-    if (!res.writableEnded) {
-      res.end();
-    }
+    console.error("Pipeline error:", error);
+    res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+    res.end();
   }
 });
 
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Backend running on http://localhost:${PORT}`);
-  console.log(`Chat model: ${CHAT_MODEL}`);
-  console.log(`Embedding model: ${EMBEDDING_MODEL}`);
 });
