@@ -1,4 +1,3 @@
-@'
 name: Agentic RAG CI
 
 on:
@@ -40,4 +39,3 @@ jobs:
       - name: Check backend JavaScript syntax
         working-directory: server
         run: node --check index.js
-'@ | Set-Content -Encoding utf8 .github\workflows\ci.yml
