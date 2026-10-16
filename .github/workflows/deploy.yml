@@ -1,0 +1,39 @@
+name: Build and Test Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  validate-and-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js Runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: |
+            server/package-lock.json
+            client/package-lock.json
+
+      - name: Install & Lint Backend
+        run: |
+          cd server
+          npm install
+
+      - name: Build Frontend Bundle
+        run: |
+          cd client
+          npm install
+          npm run build
+
+      - name: Test Docker Compose Build
+        run: |
+          docker compose build
