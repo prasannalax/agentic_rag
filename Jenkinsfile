@@ -5,6 +5,7 @@ pipeline {
         GROQ_API_KEY = credentials('GROQ_API_KEY')
         MONGODB_URI  = credentials('MONGODB_URI')
         DOCKER_BUILDKIT = '1'
+        PATH = "C:\\Users\\Laxmiprasanna\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin;${env.PATH}"
     }
 
     stages {
@@ -42,8 +43,7 @@ pipeline {
 
         stage('Healthcheck') {
             steps {
-                sleep time: 10, unit: 'SECONDS'
-                // Use PowerShell curl/Invoke-WebRequest to test the frontend port
+                sleep time: 15, unit: 'SECONDS'
                 powershell '''
                     $response = Invoke-WebRequest -Uri "http://localhost:3000" -UseBasicParsing
                     if ($response.StatusCode -ne 200) { exit 1 }
