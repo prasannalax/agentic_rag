@@ -45,7 +45,7 @@ pipeline {
                 sleep time: 10, unit: 'SECONDS'
                 // Use PowerShell curl/Invoke-WebRequest to test the frontend port
                 powershell '''
-                    $response = Invoke-WebRequest -Uri "http://localhost:8080" -UseBasicParsing
+                    $response = Invoke-WebRequest -Uri "http://localhost:3000" -UseBasicParsing
                     if ($response.StatusCode -ne 200) { exit 1 }
                 '''
             }
@@ -57,7 +57,7 @@ pipeline {
             cleanWs()
         }
         success {
-            echo "CI/CD Pipeline succeeded! Deployment is live on http://localhost:8080"
+            echo "CI/CD Pipeline succeeded! Deployment is live on http://localhost:3000"
         }
         failure {
             echo "Pipeline failed. Check stage logs for details."
