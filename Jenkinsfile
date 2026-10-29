@@ -2,13 +2,14 @@ pipeline {
     agent any
 
     environment {
-        // Route Docker CLI to Docker Desktop's exposed TCP socket
+        // Point Docker CLI directly to your existing working .docker configuration and plugins
+        DOCKER_CONFIG   = "C:\\Users\\Laxmiprasanna\\.docker"
         DOCKER_HOST     = 'tcp://127.0.0.1:2375'
         DOCKER_BUILDKIT = '1'
 
-        // Dynamic path configuration
-        PATH            = "C:\\Program Files\\Docker\\Docker\\resources\\bin;C:\\Program Files\\Docker Desktop\\resources\\bin;${env.LOCALAPPDATA}\\Programs\\DockerDesktop\\resources\\bin;${env.PATH}"
-        KUBECONFIG      = "${env.USERPROFILE}\\.kube\\config"
+        // Dynamic user PATH
+        PATH            = "C:\\Users\\Laxmiprasanna\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin;C:\\Program Files\\Docker\\Docker\\resources\\bin;${env.PATH}"
+        KUBECONFIG      = "C:\\Users\\Laxmiprasanna\\.kube\\config"
     }
 
     stages {
@@ -71,20 +72,20 @@ pipeline {
                 ]) {
                     bat '''
                         @echo off
-                        echo Verifying Docker connection...
-                        docker version
-                        if errorlevel 1 exit /b 1
-
                         echo Authenticating with Docker Hub...
                         echo %DH_TOKEN%| docker login -u "%DH_USER%" --password-stdin
                         if errorlevel 1 exit /b 1
 
+                        echo Checking buildx plugin...
+                        docker buildx version
+                        if errorlevel 1 exit /b 1
+
                         echo Building backend container image...
-                        docker build -f server/Dockerfile -t %DH_USER%/agentic-rag-backend:%BUILD_NUMBER% -t %DH_USER%/agentic-rag-backend:latest server
+                        docker buildx build --load -f server/Dockerfile -t %DH_USER%/agentic-rag-backend:%BUILD_NUMBER% -t %DH_USER%/agentic-rag-backend:latest server
                         if errorlevel 1 exit /b 1
 
                         echo Building frontend container image...
-                        docker build -f client/Dockerfile -t %DH_USER%/agentic-rag-frontend:%BUILD_NUMBER% -t %DH_USER%/agentic-rag-frontend:latest client
+                        docker buildx build --load -f client/Dockerfile -t %DH_USER%/agentic-rag-frontend:%BUILD_NUMBER% -t %DH_USER%/agentic-rag-frontend:latest client
                         if errorlevel 1 exit /b 1
 
                         echo Pushing backend images to Docker Hub...
