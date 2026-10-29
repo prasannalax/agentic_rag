@@ -2,10 +2,11 @@ pipeline {
     agent any
 
     environment {
-        // Dynamic path configuration - works across any Windows user profile
-        PATH            = "${env.USERPROFILE}\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin;${env.USERPROFILE}\\.docker\\cli-plugins;C:\\Program Files\\Docker\\Docker\\resources\\bin;${env.PATH}"
+        // Add all possible standard Docker installation paths to PATH
+        PATH            = "C:\\Program Files\\Docker\\Docker\\resources\\bin;C:\\Program Files\\Docker Desktop\\resources\\bin;${env.LOCALAPPDATA}\\Programs\\DockerDesktop\\resources\\bin;${env.PATH}"
         KUBECONFIG      = "${env.USERPROFILE}\\.kube\\config"
-        DOCKER_BUILDKIT = '1'
+        // Disable BuildKit enforcement so standard Docker CLI handles the build without requiring user-isolated buildx plugins
+        DOCKER_BUILDKIT = '0'
     }
 
     stages {
@@ -73,19 +74,11 @@ pipeline {
                         if errorlevel 1 exit /b 1
 
                         echo Building backend container image...
-                        if exist "%USERPROFILE%\\.docker\\cli-plugins\\docker-buildx.exe" (
-                            "%USERPROFILE%\\.docker\\cli-plugins\\docker-buildx.exe" build --load -f server/Dockerfile -t %DH_USER%/agentic-rag-backend:%BUILD_NUMBER% -t %DH_USER%/agentic-rag-backend:latest server
-                        ) else (
-                            docker build -f server/Dockerfile -t %DH_USER%/agentic-rag-backend:%BUILD_NUMBER% -t %DH_USER%/agentic-rag-backend:latest server
-                        )
+                        docker build -f server/Dockerfile -t %DH_USER%/agentic-rag-backend:%BUILD_NUMBER% -t %DH_USER%/agentic-rag-backend:latest server
                         if errorlevel 1 exit /b 1
 
                         echo Building frontend container image...
-                        if exist "%USERPROFILE%\\.docker\\cli-plugins\\docker-buildx.exe" (
-                            "%USERPROFILE%\\.docker\\cli-plugins\\docker-buildx.exe" build --load -f client/Dockerfile -t %DH_USER%/agentic-rag-frontend:%BUILD_NUMBER% -t %DH_USER%/agentic-rag-frontend:latest client
-                        ) else (
-                            docker build -f client/Dockerfile -t %DH_USER%/agentic-rag-frontend:%BUILD_NUMBER% -t %DH_USER%/agentic-rag-frontend:latest client
-                        )
+                        docker build -f client/Dockerfile -t %DH_USER%/agentic-rag-frontend:%BUILD_NUMBER% -t %DH_USER%/agentic-rag-frontend:latest client
                         if errorlevel 1 exit /b 1
 
                         echo Pushing backend images to Docker Hub...
