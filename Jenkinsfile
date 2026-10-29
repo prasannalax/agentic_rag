@@ -128,12 +128,26 @@ pipeline {
                     )
                 ]) {
                     bat '''
+                        @echo off
+                        echo Ensuring namespace exists...
+                        kubectl get namespace agentic-rag >nul 2>&1 || kubectl create namespace agentic-rag
+
+                        echo Applying Kubernetes deployment manifests...
+                        if exist k8s (
+                            kubectl apply -f k8s/ -n agentic-rag
+                        ) else (
+                            kubectl apply -f backend-deployment.yaml -f frontend-deployment.yaml -n agentic-rag
+                        )
+                        if errorlevel 1 exit /b 1
+
+                        echo Updating container images to build %BUILD_NUMBER%...
                         kubectl set image deployment/rag-backend backend=%DH_USER%/agentic-rag-backend:%BUILD_NUMBER% -n agentic-rag
                         if errorlevel 1 exit /b 1
 
                         kubectl set image deployment/rag-frontend frontend=%DH_USER%/agentic-rag-frontend:%BUILD_NUMBER% -n agentic-rag
                         if errorlevel 1 exit /b 1
 
+                        echo Verifying rollout status...
                         kubectl rollout status deployment/rag-backend -n agentic-rag --timeout=180s
                         if errorlevel 1 exit /b 1
 
