@@ -1,4 +1,3 @@
-
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -16,8 +15,8 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: mcp_powered-agentic_rag-client:k8s
-          imagePullPolicy: Never
+          image: prasanna123laxmi/agentic-rag-frontend:latest
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 80
 ---
