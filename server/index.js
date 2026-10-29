@@ -15,10 +15,9 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://host.docker.internal:11434';
 const OLLAMA_EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || 'nomic-embed-text';
 const GROQ_CHAT_MODEL = process.env.GROQ_CHAT_MODEL || 'openai/gpt-oss-20b';
-
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
 await mongoose.connect(process.env.MONGODB_URI);
