@@ -2,11 +2,13 @@ pipeline {
     agent any
 
     environment {
-        // Add all possible standard Docker installation paths to PATH
+        // Route Docker CLI to Docker Desktop's exposed TCP socket
+        DOCKER_HOST     = 'tcp://127.0.0.1:2375'
+        DOCKER_BUILDKIT = '1'
+
+        // Dynamic path configuration
         PATH            = "C:\\Program Files\\Docker\\Docker\\resources\\bin;C:\\Program Files\\Docker Desktop\\resources\\bin;${env.LOCALAPPDATA}\\Programs\\DockerDesktop\\resources\\bin;${env.PATH}"
         KUBECONFIG      = "${env.USERPROFILE}\\.kube\\config"
-        // Disable BuildKit enforcement so standard Docker CLI handles the build without requiring user-isolated buildx plugins
-        DOCKER_BUILDKIT = '0'
     }
 
     stages {
@@ -69,6 +71,10 @@ pipeline {
                 ]) {
                     bat '''
                         @echo off
+                        echo Verifying Docker connection...
+                        docker version
+                        if errorlevel 1 exit /b 1
+
                         echo Authenticating with Docker Hub...
                         echo %DH_TOKEN%| docker login -u "%DH_USER%" --password-stdin
                         if errorlevel 1 exit /b 1
