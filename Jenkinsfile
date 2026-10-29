@@ -84,8 +84,8 @@ pipeline {
                         docker buildx build --load -f server/Dockerfile -t %DH_USER%/agentic-rag-backend:%BUILD_NUMBER% -t %DH_USER%/agentic-rag-backend:latest server
                         if errorlevel 1 exit /b 1
 
-                        echo Building frontend container image...
-                        docker buildx build --load -f client/Dockerfile -t %DH_USER%/agentic-rag-frontend:%BUILD_NUMBER% -t %DH_USER%/agentic-rag-frontend:latest client
+                        echo Building frontend container image with Dockerfile.k8s...
+                        docker buildx build --load -f client/Dockerfile.k8s -t %DH_USER%/agentic-rag-frontend:%BUILD_NUMBER% -t %DH_USER%/agentic-rag-frontend:latest client
                         if errorlevel 1 exit /b 1
 
                         echo Pushing backend images to Docker Hub...
