@@ -73,11 +73,19 @@ pipeline {
                         if errorlevel 1 exit /b 1
 
                         echo Building backend container image...
-                        docker buildx build --load -f server/Dockerfile -t %DH_USER%/agentic-rag-backend:%BUILD_NUMBER% -t %DH_USER%/agentic-rag-backend:latest server
+                        if exist "%USERPROFILE%\\.docker\\cli-plugins\\docker-buildx.exe" (
+                            "%USERPROFILE%\\.docker\\cli-plugins\\docker-buildx.exe" build --load -f server/Dockerfile -t %DH_USER%/agentic-rag-backend:%BUILD_NUMBER% -t %DH_USER%/agentic-rag-backend:latest server
+                        ) else (
+                            docker build -f server/Dockerfile -t %DH_USER%/agentic-rag-backend:%BUILD_NUMBER% -t %DH_USER%/agentic-rag-backend:latest server
+                        )
                         if errorlevel 1 exit /b 1
 
                         echo Building frontend container image...
-                        docker buildx build --load -f client/Dockerfile -t %DH_USER%/agentic-rag-frontend:%BUILD_NUMBER% -t %DH_USER%/agentic-rag-frontend:latest client
+                        if exist "%USERPROFILE%\\.docker\\cli-plugins\\docker-buildx.exe" (
+                            "%USERPROFILE%\\.docker\\cli-plugins\\docker-buildx.exe" build --load -f client/Dockerfile -t %DH_USER%/agentic-rag-frontend:%BUILD_NUMBER% -t %DH_USER%/agentic-rag-frontend:latest client
+                        ) else (
+                            docker build -f client/Dockerfile -t %DH_USER%/agentic-rag-frontend:%BUILD_NUMBER% -t %DH_USER%/agentic-rag-frontend:latest client
+                        )
                         if errorlevel 1 exit /b 1
 
                         echo Pushing backend images to Docker Hub...
