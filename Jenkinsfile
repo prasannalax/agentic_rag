@@ -1,17 +1,10 @@
-
 pipeline {
     agent any
 
     environment {
-        DOCKER_EXE = 'C:\\Users\\user\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\docker.exe'
-        BUILDX_EXE = 'C:\\Users\\user\\.docker\\cli-plugins\\docker-buildx.exe'
-        KUBECTL_EXE = 'C:\\Users\\user\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin\\kubectl.exe'
-        KUBECONFIG = 'C:\\Users\\user\\.kube\\config'
-
-        DOCKERHUB_USER = 'raahithya0802'
-        BACKEND_IMAGE = 'raahithya0802/agentic-rag-backend'
-        FRONTEND_IMAGE = 'raahithya0802/agentic-rag-frontend'
-
+        // Dynamic path configuration - works across any Windows user profile
+        PATH            = "${env.USERPROFILE}\\AppData\\Local\\Programs\\DockerDesktop\\resources\\bin;${env.USERPROFILE}\\.docker\\cli-plugins;C:\\Program Files\\Docker\\Docker\\resources\\bin;${env.PATH}"
+        KUBECONFIG      = "${env.USERPROFILE}\\.kube\\config"
         DOCKER_BUILDKIT = '1'
     }
 
@@ -25,15 +18,17 @@ pipeline {
 
         stage('Check Node.js and npm') {
             steps {
-                bat 'node --version'
-                bat 'npm --version'
+                bat '''
+                    node --version
+                    npm --version
+                '''
             }
         }
 
         stage('Install Frontend Dependencies') {
             steps {
                 dir('client') {
-                    bat 'npm ci'
+                    bat 'npm install'
                 }
             }
         }
@@ -49,7 +44,7 @@ pipeline {
         stage('Install Backend Dependencies') {
             steps {
                 dir('server') {
-                    bat 'npm ci'
+                    bat 'npm install --omit=dev'
                 }
             }
         }
@@ -62,19 +57,7 @@ pipeline {
             }
         }
 
-        stage('Build Docker Images') {
-            steps {
-                bat '''
-                    "%BUILDX_EXE%" build --load -f server/Dockerfile -t %BACKEND_IMAGE%:%BUILD_NUMBER% -t %BACKEND_IMAGE%:latest server
-                    if errorlevel 1 exit /b 1
-
-                    "%BUILDX_EXE%" build --load -f client/Dockerfile.k8s -t %FRONTEND_IMAGE%:%BUILD_NUMBER% -t %FRONTEND_IMAGE%:latest client
-                    if errorlevel 1 exit /b 1
-                '''
-            }
-        }
-
-        stage('Push Images to Docker Hub') {
+        stage('Build & Push Docker Images') {
             steps {
                 withCredentials([
                     usernamePassword(
@@ -84,22 +67,33 @@ pipeline {
                     )
                 ]) {
                     bat '''
-                        echo %DH_TOKEN%| "%DOCKER_EXE%" login -u "%DH_USER%" --password-stdin
+                        @echo off
+                        echo Authenticating with Docker Hub...
+                        echo %DH_TOKEN%| docker login -u "%DH_USER%" --password-stdin
                         if errorlevel 1 exit /b 1
 
-                        "%DOCKER_EXE%" push %BACKEND_IMAGE%:%BUILD_NUMBER%
+                        echo Building backend container image...
+                        docker buildx build --load -f server/Dockerfile -t %DH_USER%/agentic-rag-backend:%BUILD_NUMBER% -t %DH_USER%/agentic-rag-backend:latest server
                         if errorlevel 1 exit /b 1
 
-                        "%DOCKER_EXE%" push %BACKEND_IMAGE%:latest
+                        echo Building frontend container image...
+                        docker buildx build --load -f client/Dockerfile -t %DH_USER%/agentic-rag-frontend:%BUILD_NUMBER% -t %DH_USER%/agentic-rag-frontend:latest client
                         if errorlevel 1 exit /b 1
 
-                        "%DOCKER_EXE%" push %FRONTEND_IMAGE%:%BUILD_NUMBER%
+                        echo Pushing backend images to Docker Hub...
+                        docker push %DH_USER%/agentic-rag-backend:%BUILD_NUMBER%
+                        if errorlevel 1 exit /b 1
+                        docker push %DH_USER%/agentic-rag-backend:latest
                         if errorlevel 1 exit /b 1
 
-                        "%DOCKER_EXE%" push %FRONTEND_IMAGE%:latest
+                        echo Pushing frontend images to Docker Hub...
+                        docker push %DH_USER%/agentic-rag-frontend:%BUILD_NUMBER%
+                        if errorlevel 1 exit /b 1
+                        docker push %DH_USER%/agentic-rag-frontend:latest
                         if errorlevel 1 exit /b 1
 
-                        "%DOCKER_EXE%" logout
+                        echo Cleaning registry authentication session...
+                        docker logout
                     '''
                 }
             }
@@ -108,39 +102,48 @@ pipeline {
         stage('Check Kubernetes Access') {
             steps {
                 bat '''
-                    "%KUBECTL_EXE%" config current-context
+                    kubectl config current-context
                     if errorlevel 1 exit /b 1
 
-                    "%KUBECTL_EXE%" get deployments -n agentic-rag
-                    if errorlevel 1 exit /b 1
+                    kubectl get namespace agentic-rag >nul 2>&1 || kubectl create namespace agentic-rag
                 '''
             }
         }
 
         stage('Deploy to Kubernetes') {
             steps {
-                bat '''
-                    "%KUBECTL_EXE%" set image deployment/rag-backend backend=%BACKEND_IMAGE%:%BUILD_NUMBER% -n agentic-rag
-                    if errorlevel 1 exit /b 1
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'dockerhub-creds',
+                        usernameVariable: 'DH_USER',
+                        passwordVariable: 'DH_TOKEN'
+                    )
+                ]) {
+                    bat '''
+                        kubectl set image deployment/rag-backend backend=%DH_USER%/agentic-rag-backend:%BUILD_NUMBER% -n agentic-rag
+                        if errorlevel 1 exit /b 1
 
-                    "%KUBECTL_EXE%" set image deployment/rag-frontend frontend=%FRONTEND_IMAGE%:%BUILD_NUMBER% -n agentic-rag
-                    if errorlevel 1 exit /b 1
+                        kubectl set image deployment/rag-frontend frontend=%DH_USER%/agentic-rag-frontend:%BUILD_NUMBER% -n agentic-rag
+                        if errorlevel 1 exit /b 1
 
-                    "%KUBECTL_EXE%" rollout status deployment/rag-backend -n agentic-rag --timeout=180s
-                    if errorlevel 1 exit /b 1
+                        kubectl rollout status deployment/rag-backend -n agentic-rag --timeout=180s
+                        if errorlevel 1 exit /b 1
 
-                    "%KUBECTL_EXE%" rollout status deployment/rag-frontend -n agentic-rag --timeout=180s
-                    if errorlevel 1 exit /b 1
-                '''
+                        kubectl rollout status deployment/rag-frontend -n agentic-rag --timeout=180s
+                        if errorlevel 1 exit /b 1
+                    '''
+                }
             }
         }
     }
 
     post {
+        always {
+            cleanWs()
+        }
         success {
             echo 'CI/CD succeeded: images published and Kubernetes deployment completed.'
         }
-
         failure {
             echo 'Pipeline failed. Check the first failed stage in Console Output.'
         }
