@@ -12,7 +12,9 @@ import { queryDuckDuckGoFallback } from './services/mcpClient.js';
 dotenv.config();
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: ['http://localhost:5173', 'http://localhost:3000', 'https://github.io']
+}));
 app.use(express.json());
 
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434';
